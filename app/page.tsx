@@ -355,6 +355,17 @@ export default function Dashboard() {
       await uploadFile(file)
       const buffer = await file.arrayBuffer()
       const data = processExcelFile(buffer)
+
+      // Debug logging
+      console.log('=== EXTRACTION DEBUG ===')
+      console.log('Total weeklyKPI records:', data.weeklyKPI?.length || 0)
+      const uniqueAreas = new Set(data.weeklyKPI?.map(w => w.area) || [])
+      console.log('Unique areas in weeklyKPI:', uniqueAreas.size, Array.from(uniqueAreas))
+      const w43Data = data.weeklyKPI?.filter(w => w.weekNumber === 43 && w.kpi === 'Freight Booking') || []
+      console.log('Week 43 Freight Booking records:', w43Data.length)
+      const w43Total = w43Data.reduce((sum, w) => sum + (w.actual || 0), 0)
+      console.log('Week 43 Freight Booking total:', w43Total.toFixed(2), 'Cr')
+
       setMetrics(data)
       setLastUpdated(new Date().toISOString())
 
