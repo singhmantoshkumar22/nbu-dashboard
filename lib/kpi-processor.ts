@@ -74,6 +74,87 @@ export const KPI_TARGETS: Record<string, { target: number; direction: 'higher' |
   'LHC Advance %': { target: 80, direction: 'higher' },
 }
 
+// Indian Financial Year Helper Functions
+// FY starts April 1st, Week 1 = April 1-7
+// FY26 = April 1, 2025 to March 31, 2026
+
+// Month boundaries in FY weeks (approximate 4-5 weeks per month)
+const FY_MONTH_WEEKS: { month: string; startWeek: number; endWeek: number }[] = [
+  { month: 'April', startWeek: 1, endWeek: 4 },
+  { month: 'May', startWeek: 5, endWeek: 9 },
+  { month: 'June', startWeek: 10, endWeek: 13 },
+  { month: 'July', startWeek: 14, endWeek: 17 },
+  { month: 'August', startWeek: 18, endWeek: 22 },
+  { month: 'September', startWeek: 23, endWeek: 26 },
+  { month: 'October', startWeek: 27, endWeek: 30 },
+  { month: 'November', startWeek: 31, endWeek: 35 },
+  { month: 'December', startWeek: 36, endWeek: 39 },
+  { month: 'January', startWeek: 40, endWeek: 44 },
+  { month: 'February', startWeek: 45, endWeek: 48 },
+  { month: 'March', startWeek: 49, endWeek: 52 },
+]
+
+// Quarter boundaries in FY
+const FY_QUARTERS: { quarter: number; startWeek: number; endWeek: number; months: string }[] = [
+  { quarter: 1, startWeek: 1, endWeek: 13, months: 'Apr-Jun' },
+  { quarter: 2, startWeek: 14, endWeek: 26, months: 'Jul-Sep' },
+  { quarter: 3, startWeek: 27, endWeek: 39, months: 'Oct-Dec' },
+  { quarter: 4, startWeek: 40, endWeek: 52, months: 'Jan-Mar' },
+]
+
+// Get FY month info from week number
+export function getFYMonthFromWeek(weekNumber: number): { month: string; startWeek: number; endWeek: number } {
+  for (const m of FY_MONTH_WEEKS) {
+    if (weekNumber >= m.startWeek && weekNumber <= m.endWeek) {
+      return m
+    }
+  }
+  // Default to last month if week > 52
+  return FY_MONTH_WEEKS[FY_MONTH_WEEKS.length - 1]
+}
+
+// Get FY quarter info from week number
+export function getFYQuarterFromWeek(weekNumber: number): { quarter: number; startWeek: number; endWeek: number; months: string } {
+  for (const q of FY_QUARTERS) {
+    if (weekNumber >= q.startWeek && weekNumber <= q.endWeek) {
+      return q
+    }
+  }
+  // Default to Q4 if week > 52
+  return FY_QUARTERS[FY_QUARTERS.length - 1]
+}
+
+// Get week range for period based on current week (FY logic)
+export function getWeekRangeForPeriod(
+  latestWeek: number,
+  period: 'week' | 'month' | 'quarter' | 'ytd'
+): { startWeek: number; endWeek: number; label: string } {
+  if (period === 'week') {
+    return { startWeek: latestWeek, endWeek: latestWeek, label: `W${latestWeek}` }
+  }
+
+  if (period === 'month') {
+    const monthInfo = getFYMonthFromWeek(latestWeek)
+    return {
+      startWeek: monthInfo.startWeek,
+      endWeek: Math.min(monthInfo.endWeek, latestWeek),
+      label: monthInfo.month
+    }
+  }
+
+  if (period === 'quarter') {
+    const quarterInfo = getFYQuarterFromWeek(latestWeek)
+    return {
+      startWeek: quarterInfo.startWeek,
+      endWeek: Math.min(quarterInfo.endWeek, latestWeek),
+      label: `Q${quarterInfo.quarter} (${quarterInfo.months})`
+    }
+  }
+
+  // YTD - from week 1 to latest week
+  return { startWeek: 1, endWeek: latestWeek, label: `YTD FY26 (W1-W${latestWeek})` }
+}
+
 export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
   const workbook = XLSX.read(buffer, { type: 'array' })
 
@@ -395,22 +476,14 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
   return metrics
 }
 
-// Helper function to filter weekly data by time period
+// Helper function to filter weekly data by time period (FY-based)
 export function filterByPeriod(
   weeklyData: WeeklyDeliveryData[],
   latestWeek: number,
-  period: 'week' | 'month' | 'quarter' | 'year'
+  period: 'week' | 'month' | 'quarter' | 'ytd'
 ): WeeklyDeliveryData[] {
-  const weeksToInclude = {
-    week: 1,
-    month: 4,
-    quarter: 13,
-    year: 52,
-  }[period]
-
-  const startWeek = Math.max(1, latestWeek - weeksToInclude + 1)
-
-  return weeklyData.filter(d => d.weekNumber >= startWeek && d.weekNumber <= latestWeek)
+  const range = getWeekRangeForPeriod(latestWeek, period)
+  return weeklyData.filter(d => d.weekNumber >= range.startWeek && d.weekNumber <= range.endWeek)
 }
 
 // Calculate aggregated metrics for filtered data
@@ -464,11 +537,11 @@ export function calculateFilteredMetrics(
   return { otdPercent, ifdPercent }
 }
 
-// Calculate filtered metrics for all KPIs based on time period
+// Calculate filtered metrics for all KPIs based on time period (FY-based)
 export function calculateFilteredKPIMetrics(
   weeklyKPI: WeeklyKPIData[],
   latestWeek: number,
-  period: 'week' | 'month' | 'quarter' | 'year',
+  period: 'week' | 'month' | 'quarter' | 'ytd',
   selectedRegions: string[],
   selectedAreas: string[]
 ): { freightBooking: number; gm2Percent: number; pbtPercent: number; lhcAdvance: number } {
@@ -476,18 +549,12 @@ export function calculateFilteredKPIMetrics(
     return { freightBooking: 0, gm2Percent: 0, pbtPercent: 0, lhcAdvance: 0 }
   }
 
-  const weeksToInclude = {
-    week: 1,
-    month: 4,
-    quarter: 13,
-    year: 52,
-  }[period]
-
-  const startWeek = Math.max(1, latestWeek - weeksToInclude + 1)
+  // Use FY-based week ranges
+  const range = getWeekRangeForPeriod(latestWeek, period)
 
   // Filter by period and selection
   const filtered = weeklyKPI.filter(d => {
-    if (d.weekNumber < startWeek || d.weekNumber > latestWeek) return false
+    if (d.weekNumber < range.startWeek || d.weekNumber > range.endWeek) return false
     if (selectedRegions.length > 0 && !selectedRegions.includes(d.region)) return false
     if (selectedAreas.length > 0 && !selectedAreas.includes(d.area)) return false
     return true

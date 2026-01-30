@@ -5,7 +5,7 @@ import {
   Upload, BarChart3, TrendingUp, AlertTriangle, CheckCircle, XCircle,
   ChevronDown, Home, Database, Filter, RefreshCw, History, Menu, X, FileSpreadsheet, Calendar
 } from 'lucide-react'
-import { processExcelFile, DashboardMetrics, KPIData, DeliveryKPI, ConcernItem, WeeklyDeliveryData, WeeklyKPIData, filterByPeriod, calculateFilteredMetrics, calculateFilteredKPIMetrics } from '@/lib/kpi-processor'
+import { processExcelFile, DashboardMetrics, KPIData, DeliveryKPI, ConcernItem, WeeklyDeliveryData, WeeklyKPIData, filterByPeriod, calculateFilteredMetrics, calculateFilteredKPIMetrics, getWeekRangeForPeriod, getFYMonthFromWeek, getFYQuarterFromWeek } from '@/lib/kpi-processor'
 import { uploadFile } from '@/lib/supabase'
 import KPICard from '@/components/KPICard'
 import {
@@ -41,7 +41,7 @@ export default function Dashboard() {
   const [selectedRegions, setSelectedRegions] = useState<string[]>([])
   const [selectedAreas, setSelectedAreas] = useState<string[]>([])
   const [selectedKPI, setSelectedKPI] = useState<string>('Freight Booking')
-  const [selectedPeriod, setSelectedPeriod] = useState<'week' | 'month' | 'quarter' | 'year'>('month')
+  const [selectedPeriod, setSelectedPeriod] = useState<'week' | 'month' | 'quarter' | 'ytd'>('month')
 
   // Weekly time-series data for time period filtering
   const [weeklyOTD, setWeeklyOTD] = useState<WeeklyDeliveryData[]>([])
@@ -489,10 +489,10 @@ export default function Dashboard() {
               </h3>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { id: 'week' as const, label: 'Week', desc: '1 week' },
-                  { id: 'month' as const, label: 'Month', desc: '4 weeks' },
-                  { id: 'quarter' as const, label: 'Quarter', desc: '13 weeks' },
-                  { id: 'year' as const, label: 'Year', desc: '52 weeks' },
+                  { id: 'week' as const, label: 'Week' },
+                  { id: 'month' as const, label: 'Month' },
+                  { id: 'quarter' as const, label: 'Quarter' },
+                  { id: 'ytd' as const, label: 'YTD FY26' },
                 ].map((period) => (
                   <button
                     key={period.id}
@@ -509,23 +509,27 @@ export default function Dashboard() {
               </div>
               {latestWeek > 0 ? (
                 <div className="mt-2 px-3 py-2 bg-slate-900/50 rounded-lg">
-                  <p className="text-xs text-orange-400 font-medium">
-                    OTD: {selectedPeriod === 'week' ? `Week ${latestWeekOTD}` :
-                     selectedPeriod === 'month' ? `Weeks ${Math.max(1, latestWeekOTD - 3)}-${latestWeekOTD}` :
-                     selectedPeriod === 'quarter' ? `Weeks ${Math.max(1, latestWeekOTD - 12)}-${latestWeekOTD}` :
-                     `Weeks 1-${latestWeekOTD}`}
-                  </p>
-                  {latestWeekIFD > 0 && latestWeekIFD !== latestWeekOTD && (
-                    <p className="text-xs text-blue-400 font-medium">
-                      IFD: Weeks 1-{latestWeekIFD} (data available)
-                    </p>
-                  )}
+                  {(() => {
+                    const range = getWeekRangeForPeriod(latestWeek, selectedPeriod)
+                    const monthInfo = getFYMonthFromWeek(latestWeek)
+                    const quarterInfo = getFYQuarterFromWeek(latestWeek)
+                    return (
+                      <>
+                        <p className="text-xs text-orange-400 font-medium">
+                          {selectedPeriod === 'week' ? `Week ${latestWeek}` :
+                           selectedPeriod === 'month' ? `${monthInfo.month} (W${range.startWeek}-W${range.endWeek})` :
+                           selectedPeriod === 'quarter' ? `Q${quarterInfo.quarter} ${quarterInfo.months} (W${range.startWeek}-W${range.endWeek})` :
+                           `YTD FY26 (W1-W${latestWeek})`}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Current: W{latestWeek} • Q{quarterInfo.quarter} • {monthInfo.month}
+                        </p>
+                      </>
+                    )
+                  })()}
                   {latestWeekKPI > 0 && (
-                    <p className="text-xs text-green-400 font-medium">
-                      KPI: {selectedPeriod === 'week' ? `Week ${latestWeekKPI}` :
-                       selectedPeriod === 'month' ? `Weeks ${Math.max(1, latestWeekKPI - 3)}-${latestWeekKPI}` :
-                       selectedPeriod === 'quarter' ? `Weeks ${Math.max(1, latestWeekKPI - 12)}-${latestWeekKPI}` :
-                       `Weeks 1-${latestWeekKPI}`} ({weeklyKPI.length} records)
+                    <p className="text-xs text-green-400 font-medium mt-1">
+                      {weeklyKPI.length} weekly KPI records loaded
                     </p>
                   )}
                   <p className="text-xs text-gray-400 mt-1">
@@ -752,10 +756,15 @@ export default function Dashboard() {
                       <Calendar className="w-4 h-4" />
                       <span>
                         Showing data for: <strong className="text-orange-400">
-                          {selectedPeriod === 'week' ? `Week ${latestWeek}` :
-                           selectedPeriod === 'month' ? `Weeks ${Math.max(1, latestWeek - 3)}-${latestWeek}` :
-                           selectedPeriod === 'quarter' ? `Weeks ${Math.max(1, latestWeek - 12)}-${latestWeek}` :
-                           `Weeks 1-${latestWeek}`}
+                          {(() => {
+                            const range = getWeekRangeForPeriod(latestWeek, selectedPeriod)
+                            const monthInfo = getFYMonthFromWeek(latestWeek)
+                            const quarterInfo = getFYQuarterFromWeek(latestWeek)
+                            return selectedPeriod === 'week' ? `Week ${latestWeek}` :
+                                   selectedPeriod === 'month' ? `${monthInfo.month} (W${range.startWeek}-W${range.endWeek})` :
+                                   selectedPeriod === 'quarter' ? `Q${quarterInfo.quarter} (W${range.startWeek}-W${range.endWeek})` :
+                                   `YTD FY26 (W1-W${latestWeek})`
+                          })()}
                         </strong>
                       </span>
                     </div>
@@ -924,10 +933,15 @@ export default function Dashboard() {
                         <Calendar className="w-4 h-4" />
                         <span>
                           Period: <strong className="text-orange-400">
-                            {selectedPeriod === 'week' ? `Week ${latestWeek} only` :
-                             selectedPeriod === 'month' ? `Last 4 weeks (${Math.max(1, latestWeek - 3)}-${latestWeek})` :
-                             selectedPeriod === 'quarter' ? `Last 13 weeks (${Math.max(1, latestWeek - 12)}-${latestWeek})` :
-                             `Full year (Weeks 1-${latestWeek})`}
+                            {(() => {
+                              const range = getWeekRangeForPeriod(latestWeek, selectedPeriod)
+                              const monthInfo = getFYMonthFromWeek(latestWeek)
+                              const quarterInfo = getFYQuarterFromWeek(latestWeek)
+                              return selectedPeriod === 'week' ? `Week ${latestWeek}` :
+                                     selectedPeriod === 'month' ? `${monthInfo.month} (W${range.startWeek}-W${range.endWeek})` :
+                                     selectedPeriod === 'quarter' ? `Q${quarterInfo.quarter} (W${range.startWeek}-W${range.endWeek})` :
+                                     `YTD FY26 (W1-W${latestWeek})`
+                            })()}
                           </strong>
                         </span>
                       </div>
