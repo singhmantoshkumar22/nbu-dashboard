@@ -224,6 +224,16 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
 
       if (!kpi || kpi === 'KPI') continue
 
+      // Skip subtotal and grand total rows to avoid double/triple counting
+      // "Contract Execution" rows are regional subtotals
+      // Rows with "Grand Total" or "Total" in region are grand totals
+      const isSubtotalRow = area === 'Contract Execution' ||
+                            area.toLowerCase().includes('total') ||
+                            currentRegion.toLowerCase().includes('grand total') ||
+                            currentRegion.toLowerCase().includes('nbu total')
+
+      if (isSubtotalRow) continue
+
       const variance = fy25Budget && fy25Actual
         ? ((fy25Actual - fy25Budget) / fy25Budget) * 100
         : null
