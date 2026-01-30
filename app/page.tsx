@@ -47,6 +47,8 @@ export default function Dashboard() {
   const [weeklyOTD, setWeeklyOTD] = useState<WeeklyDeliveryData[]>([])
   const [weeklyIFD, setWeeklyIFD] = useState<WeeklyDeliveryData[]>([])
   const [latestWeek, setLatestWeek] = useState<number>(0)
+  const [latestWeekOTD, setLatestWeekOTD] = useState<number>(0)
+  const [latestWeekIFD, setLatestWeekIFD] = useState<number>(0)
 
   // Get unique values for filters
   const regions = useMemo(() => {
@@ -116,7 +118,7 @@ export default function Dashboard() {
 
   // Calculate time-period filtered OTD/IFD metrics - THIS IS THE KEY FUNCTIONALITY
   const periodFilteredMetrics = useMemo(() => {
-    if (!latestWeek || (weeklyOTD.length === 0 && weeklyIFD.length === 0)) {
+    if ((weeklyOTD.length === 0 && weeklyIFD.length === 0)) {
       // Fallback to overall metrics if no weekly data
       return {
         otdPercent: metrics?.otdPercent || 0,
@@ -125,12 +127,26 @@ export default function Dashboard() {
     }
 
     // Filter weekly data by the selected time period
-    const filteredOTD = filterByPeriod(weeklyOTD, latestWeek, selectedPeriod)
-    const filteredIFD = filterByPeriod(weeklyIFD, latestWeek, selectedPeriod)
+    // Use separate latest weeks for OTD and IFD to handle different data ranges
+    const otdLatest = latestWeekOTD || latestWeek
+    const ifdLatest = latestWeekIFD || latestWeek
+
+    // For OTD, use its own latest week
+    const filteredOTD = otdLatest > 0 ? filterByPeriod(weeklyOTD, otdLatest, selectedPeriod) : []
+
+    // For IFD, use its own latest week (may be different from OTD)
+    const filteredIFD = ifdLatest > 0 ? filterByPeriod(weeklyIFD, ifdLatest, selectedPeriod) : []
 
     // Calculate aggregated metrics for the filtered period
-    return calculateFilteredMetrics(filteredOTD, filteredIFD, selectedRegions, selectedAreas)
-  }, [weeklyOTD, weeklyIFD, latestWeek, selectedPeriod, selectedRegions, selectedAreas, metrics])
+    const result = calculateFilteredMetrics(filteredOTD, filteredIFD, selectedRegions, selectedAreas)
+
+    // If no IFD data for selected period, use overall IFD
+    if (result.ifdPercent === 0 && metrics?.ifdPercent && metrics.ifdPercent > 0) {
+      result.ifdPercent = metrics.ifdPercent
+    }
+
+    return result
+  }, [weeklyOTD, weeklyIFD, latestWeek, latestWeekOTD, latestWeekIFD, selectedPeriod, selectedRegions, selectedAreas, metrics])
 
   // Get period-specific data for charts
   const periodFilteredOTDData = useMemo(() => {
@@ -168,9 +184,14 @@ export default function Dashboard() {
   }, [weeklyOTD, latestWeek, selectedPeriod, selectedRegions, selectedAreas, filteredOTDData])
 
   const periodFilteredIFDData = useMemo(() => {
-    if (!latestWeek || weeklyIFD.length === 0) return filteredIFDData
+    // Use IFD's own latest week, not the global one
+    const ifdLatest = latestWeekIFD || latestWeek
+    if (!ifdLatest || weeklyIFD.length === 0) return filteredIFDData
 
-    const filtered = filterByPeriod(weeklyIFD, latestWeek, selectedPeriod)
+    const filtered = filterByPeriod(weeklyIFD, ifdLatest, selectedPeriod)
+
+    // If no data for selected period, return the original filtered data
+    if (filtered.length === 0) return filteredIFDData
 
     const bySelection = filtered.filter(d => {
       if (selectedRegions.length > 0 && !selectedRegions.includes(d.region)) return false
@@ -267,9 +288,16 @@ export default function Dashboard() {
           setFileName(json.data.fileName)
           setLastUpdated(json.data.createdAt)
           // Set weekly data for time period filtering
-          setWeeklyOTD(json.data.weeklyOTD || [])
-          setWeeklyIFD(json.data.weeklyIFD || [])
+          const otdData = json.data.weeklyOTD || []
+          const ifdData = json.data.weeklyIFD || []
+          setWeeklyOTD(otdData)
+          setWeeklyIFD(ifdData)
           setLatestWeek(json.data.latestWeek || 0)
+          // Calculate separate latest weeks for OTD and IFD
+          const maxOTDWeek = otdData.length > 0 ? Math.max(...otdData.map((d: WeeklyDeliveryData) => d.weekNumber)) : 0
+          const maxIFDWeek = ifdData.length > 0 ? Math.max(...ifdData.map((d: WeeklyDeliveryData) => d.weekNumber)) : 0
+          setLatestWeekOTD(maxOTDWeek)
+          setLatestWeekIFD(maxIFDWeek)
         }
       } catch (error) {
         console.error('Failed to load latest dashboard:', error)
@@ -309,9 +337,16 @@ export default function Dashboard() {
       setLastUpdated(new Date().toISOString())
 
       // Set weekly data for time period filtering
-      setWeeklyOTD(data.weeklyOTD || [])
-      setWeeklyIFD(data.weeklyIFD || [])
+      const otdData = data.weeklyOTD || []
+      const ifdData = data.weeklyIFD || []
+      setWeeklyOTD(otdData)
+      setWeeklyIFD(ifdData)
       setLatestWeek(data.latestWeek || 0)
+      // Calculate separate latest weeks for OTD and IFD
+      const maxOTDWeek = otdData.length > 0 ? Math.max(...otdData.map((d: WeeklyDeliveryData) => d.weekNumber)) : 0
+      const maxIFDWeek = ifdData.length > 0 ? Math.max(...ifdData.map((d: WeeklyDeliveryData) => d.weekNumber)) : 0
+      setLatestWeekOTD(maxOTDWeek)
+      setLatestWeekIFD(maxIFDWeek)
 
       await fetch('/api/dashboard/save', {
         method: 'POST',
@@ -448,12 +483,19 @@ export default function Dashboard() {
               {latestWeek > 0 ? (
                 <div className="mt-2 px-3 py-2 bg-slate-900/50 rounded-lg">
                   <p className="text-xs text-orange-400 font-medium">
-                    {selectedPeriod === 'week' ? `Week ${latestWeek}` :
-                     selectedPeriod === 'month' ? `Weeks ${Math.max(1, latestWeek - 3)}-${latestWeek}` :
-                     selectedPeriod === 'quarter' ? `Weeks ${Math.max(1, latestWeek - 12)}-${latestWeek}` :
-                     `Weeks 1-${latestWeek}`}
+                    OTD: {selectedPeriod === 'week' ? `Week ${latestWeekOTD}` :
+                     selectedPeriod === 'month' ? `Weeks ${Math.max(1, latestWeekOTD - 3)}-${latestWeekOTD}` :
+                     selectedPeriod === 'quarter' ? `Weeks ${Math.max(1, latestWeekOTD - 12)}-${latestWeekOTD}` :
+                     `Weeks 1-${latestWeekOTD}`}
                   </p>
-                  <p className="text-xs text-gray-500">OTD: {periodFilteredMetrics.otdPercent.toFixed(1)}% | IFD: {periodFilteredMetrics.ifdPercent.toFixed(1)}%</p>
+                  {latestWeekIFD > 0 && latestWeekIFD !== latestWeekOTD && (
+                    <p className="text-xs text-blue-400 font-medium">
+                      IFD: Weeks 1-{latestWeekIFD} (data available)
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-400 mt-1">
+                    OTD: {periodFilteredMetrics.otdPercent.toFixed(1)}% | IFD: {periodFilteredMetrics.ifdPercent.toFixed(1)}%
+                  </p>
                 </div>
               ) : (
                 <p className="text-xs text-gray-500 mt-2">
