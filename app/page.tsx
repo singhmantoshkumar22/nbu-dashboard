@@ -5,7 +5,7 @@ import {
   Upload, BarChart3, TrendingUp, AlertTriangle, CheckCircle, XCircle,
   ChevronDown, Home, Database, Filter, RefreshCw, History, Menu, X, FileSpreadsheet, Calendar
 } from 'lucide-react'
-import { processExcelFile, DashboardMetrics, KPIData, DeliveryKPI, ConcernItem } from '@/lib/kpi-processor'
+import { processExcelFile, DashboardMetrics, KPIData, DeliveryKPI, ConcernItem, WeeklyDeliveryData, filterByPeriod, calculateFilteredMetrics } from '@/lib/kpi-processor'
 import { uploadFile } from '@/lib/supabase'
 import KPICard from '@/components/KPICard'
 import {
@@ -41,7 +41,12 @@ export default function Dashboard() {
   const [selectedRegions, setSelectedRegions] = useState<string[]>([])
   const [selectedAreas, setSelectedAreas] = useState<string[]>([])
   const [selectedKPI, setSelectedKPI] = useState<string>('Freight Booking')
-  const [selectedPeriod, setSelectedPeriod] = useState<string>('month')
+  const [selectedPeriod, setSelectedPeriod] = useState<'week' | 'month' | 'quarter' | 'year'>('month')
+
+  // Weekly time-series data for time period filtering
+  const [weeklyOTD, setWeeklyOTD] = useState<WeeklyDeliveryData[]>([])
+  const [weeklyIFD, setWeeklyIFD] = useState<WeeklyDeliveryData[]>([])
+  const [latestWeek, setLatestWeek] = useState<number>(0)
 
   // Get unique values for filters
   const regions = useMemo(() => {
@@ -109,6 +114,91 @@ export default function Dashboard() {
     })
   }, [metrics, selectedRegions, selectedAreas])
 
+  // Calculate time-period filtered OTD/IFD metrics - THIS IS THE KEY FUNCTIONALITY
+  const periodFilteredMetrics = useMemo(() => {
+    if (!latestWeek || (weeklyOTD.length === 0 && weeklyIFD.length === 0)) {
+      // Fallback to overall metrics if no weekly data
+      return {
+        otdPercent: metrics?.otdPercent || 0,
+        ifdPercent: metrics?.ifdPercent || 0,
+      }
+    }
+
+    // Filter weekly data by the selected time period
+    const filteredOTD = filterByPeriod(weeklyOTD, latestWeek, selectedPeriod)
+    const filteredIFD = filterByPeriod(weeklyIFD, latestWeek, selectedPeriod)
+
+    // Calculate aggregated metrics for the filtered period
+    return calculateFilteredMetrics(filteredOTD, filteredIFD, selectedRegions, selectedAreas)
+  }, [weeklyOTD, weeklyIFD, latestWeek, selectedPeriod, selectedRegions, selectedAreas, metrics])
+
+  // Get period-specific data for charts
+  const periodFilteredOTDData = useMemo(() => {
+    if (!latestWeek || weeklyOTD.length === 0) return filteredOTDData
+
+    const filtered = filterByPeriod(weeklyOTD, latestWeek, selectedPeriod)
+
+    // Apply region/area filters
+    const bySelection = filtered.filter(d => {
+      if (selectedRegions.length > 0 && !selectedRegions.includes(d.region)) return false
+      if (selectedAreas.length > 0 && !selectedAreas.includes(d.area)) return false
+      return true
+    })
+
+    // Aggregate by area (average across weeks in period)
+    const byArea: Record<string, { region: string; plan: number; actual: number; count: number }> = {}
+    bySelection.forEach(d => {
+      if (d.actual !== null) {
+        if (!byArea[d.area]) {
+          byArea[d.area] = { region: d.region, plan: 0, actual: 0, count: 0 }
+        }
+        if (d.plan !== null) byArea[d.area].plan += d.plan
+        byArea[d.area].actual += d.actual
+        byArea[d.area].count++
+      }
+    })
+
+    return Object.entries(byArea).map(([area, data]) => ({
+      region: data.region,
+      area,
+      plan: data.count > 0 ? data.plan / data.count : 95,
+      actual: data.count > 0 ? data.actual / data.count : 0,
+      variance: (data.count > 0 ? data.actual / data.count : 0) - (data.count > 0 ? data.plan / data.count : 95),
+    }))
+  }, [weeklyOTD, latestWeek, selectedPeriod, selectedRegions, selectedAreas, filteredOTDData])
+
+  const periodFilteredIFDData = useMemo(() => {
+    if (!latestWeek || weeklyIFD.length === 0) return filteredIFDData
+
+    const filtered = filterByPeriod(weeklyIFD, latestWeek, selectedPeriod)
+
+    const bySelection = filtered.filter(d => {
+      if (selectedRegions.length > 0 && !selectedRegions.includes(d.region)) return false
+      if (selectedAreas.length > 0 && !selectedAreas.includes(d.area)) return false
+      return true
+    })
+
+    const byArea: Record<string, { region: string; plan: number; actual: number; count: number }> = {}
+    bySelection.forEach(d => {
+      if (d.actual !== null) {
+        if (!byArea[d.area]) {
+          byArea[d.area] = { region: d.region, plan: 0, actual: 0, count: 0 }
+        }
+        if (d.plan !== null) byArea[d.area].plan += d.plan
+        byArea[d.area].actual += d.actual
+        byArea[d.area].count++
+      }
+    })
+
+    return Object.entries(byArea).map(([area, data]) => ({
+      region: data.region,
+      area,
+      plan: data.count > 0 ? data.plan / data.count : 92,
+      actual: data.count > 0 ? data.actual / data.count : 0,
+      variance: (data.count > 0 ? data.actual / data.count : 0) - (data.count > 0 ? data.plan / data.count : 92),
+    }))
+  }, [weeklyIFD, latestWeek, selectedPeriod, selectedRegions, selectedAreas, filteredIFDData])
+
   // Performance by Region data for selected KPI
   const performanceByRegion = useMemo(() => {
     if (!metrics) return []
@@ -170,9 +260,16 @@ export default function Dashboard() {
             otdData: json.data.otdData,
             ifdData: json.data.ifdData,
             concerns: json.data.concerns,
+            weeklyOTD: json.data.weeklyOTD || [],
+            weeklyIFD: json.data.weeklyIFD || [],
+            latestWeek: json.data.latestWeek || 0,
           })
           setFileName(json.data.fileName)
           setLastUpdated(json.data.createdAt)
+          // Set weekly data for time period filtering
+          setWeeklyOTD(json.data.weeklyOTD || [])
+          setWeeklyIFD(json.data.weeklyIFD || [])
+          setLatestWeek(json.data.latestWeek || 0)
         }
       } catch (error) {
         console.error('Failed to load latest dashboard:', error)
@@ -211,6 +308,11 @@ export default function Dashboard() {
       setMetrics(data)
       setLastUpdated(new Date().toISOString())
 
+      // Set weekly data for time period filtering
+      setWeeklyOTD(data.weeklyOTD || [])
+      setWeeklyIFD(data.weeklyIFD || [])
+      setLatestWeek(data.latestWeek || 0)
+
       await fetch('/api/dashboard/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -228,6 +330,9 @@ export default function Dashboard() {
           otdData: data.otdData,
           ifdData: data.ifdData,
           concerns: data.concerns,
+          weeklyOTD: data.weeklyOTD,
+          weeklyIFD: data.weeklyIFD,
+          latestWeek: data.latestWeek,
         }),
       })
 
@@ -322,10 +427,10 @@ export default function Dashboard() {
               </h3>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { id: 'week', label: 'Week' },
-                  { id: 'month', label: 'Month' },
-                  { id: 'quarter', label: 'Quarter' },
-                  { id: 'year', label: 'Year' },
+                  { id: 'week' as const, label: 'Week', desc: '1 week' },
+                  { id: 'month' as const, label: 'Month', desc: '4 weeks' },
+                  { id: 'quarter' as const, label: 'Quarter', desc: '13 weeks' },
+                  { id: 'year' as const, label: 'Year', desc: '52 weeks' },
                 ].map((period) => (
                   <button
                     key={period.id}
@@ -340,11 +445,21 @@ export default function Dashboard() {
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-gray-500 mt-2">
-                Showing: {selectedPeriod === 'week' ? 'Last 7 days' :
-                          selectedPeriod === 'month' ? 'Last 30 days' :
-                          selectedPeriod === 'quarter' ? 'Last 90 days' : 'Last 365 days'}
-              </p>
+              {latestWeek > 0 ? (
+                <div className="mt-2 px-3 py-2 bg-slate-900/50 rounded-lg">
+                  <p className="text-xs text-orange-400 font-medium">
+                    {selectedPeriod === 'week' ? `Week ${latestWeek}` :
+                     selectedPeriod === 'month' ? `Weeks ${Math.max(1, latestWeek - 3)}-${latestWeek}` :
+                     selectedPeriod === 'quarter' ? `Weeks ${Math.max(1, latestWeek - 12)}-${latestWeek}` :
+                     `Weeks 1-${latestWeek}`}
+                  </p>
+                  <p className="text-xs text-gray-500">OTD: {periodFilteredMetrics.otdPercent.toFixed(1)}% | IFD: {periodFilteredMetrics.ifdPercent.toFixed(1)}%</p>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500 mt-2">
+                  Upload data to enable time filtering
+                </p>
+              )}
             </div>
           )}
 
@@ -554,12 +669,26 @@ export default function Dashboard() {
               {/* Executive Summary Tab */}
               {activeTab === 'summary' && (
                 <>
+                  {/* Period indicator */}
+                  {latestWeek > 0 && (
+                    <div className="mb-4 flex items-center gap-2 text-sm text-gray-400">
+                      <Calendar className="w-4 h-4" />
+                      <span>
+                        Showing data for: <strong className="text-orange-400">
+                          {selectedPeriod === 'week' ? `Week ${latestWeek}` :
+                           selectedPeriod === 'month' ? `Weeks ${Math.max(1, latestWeek - 3)}-${latestWeek}` :
+                           selectedPeriod === 'quarter' ? `Weeks ${Math.max(1, latestWeek - 12)}-${latestWeek}` :
+                           `Weeks 1-${latestWeek}`}
+                        </strong>
+                      </span>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
                     <KPICard title="Freight Booking" value={`₹${metrics.freightBooking.toFixed(1)} Cr`} icon="💰" status="blue" />
                     <KPICard title="GM2% on Sale" value={`${metrics.gm2Percent.toFixed(1)}%`} target="8%" delta={((metrics.gm2Percent - 8) / 8) * 100} icon="📊" status={getRAGStatus(metrics.gm2Percent, 8)} />
                     <KPICard title="Est. PBT%" value={`${metrics.pbtPercent.toFixed(1)}%`} target="3%" delta={((metrics.pbtPercent - 3) / 3) * 100} icon="💎" status={getRAGStatus(metrics.pbtPercent, 3)} />
-                    <KPICard title="On-Time Delivery" value={`${metrics.otdPercent.toFixed(1)}%`} target="95%" delta={((metrics.otdPercent - 95) / 95) * 100} icon="🚚" status={getRAGStatus(metrics.otdPercent, 95)} />
-                    <KPICard title="In-Full Delivery" value={`${metrics.ifdPercent.toFixed(1)}%`} target="92%" delta={((metrics.ifdPercent - 92) / 92) * 100} icon="📦" status={getRAGStatus(metrics.ifdPercent, 92)} />
+                    <KPICard title="On-Time Delivery" value={`${periodFilteredMetrics.otdPercent.toFixed(1)}%`} target="95%" delta={((periodFilteredMetrics.otdPercent - 95) / 95) * 100} icon="🚚" status={getRAGStatus(periodFilteredMetrics.otdPercent, 95)} />
+                    <KPICard title="In-Full Delivery" value={`${periodFilteredMetrics.ifdPercent.toFixed(1)}%`} target="92%" delta={((periodFilteredMetrics.ifdPercent - 92) / 92) * 100} icon="📦" status={getRAGStatus(periodFilteredMetrics.ifdPercent, 92)} />
                     <KPICard title="LHC Advance" value={`${metrics.lhcAdvance.toFixed(1)}%`} target="80%" delta={((metrics.lhcAdvance - 80) / 80) * 100} icon="💳" status={getRAGStatus(metrics.lhcAdvance, 80)} />
                   </div>
 
@@ -710,44 +839,66 @@ export default function Dashboard() {
 
               {/* Delivery Tab */}
               {activeTab === 'delivery' && (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-                    <h3 className="text-lg font-semibold text-white mb-4">On-Time Delivery by Area ({filteredOTDData.length})</h3>
-                    <div className="h-96">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={filteredOTDData.slice(0, 15)} layout="vertical" margin={{ left: 100 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                          <XAxis type="number" domain={[0, 100]} stroke="#9ca3af" />
-                          <YAxis dataKey="area" type="category" stroke="#9ca3af" tick={{ fontSize: 10 }} />
-                          <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }} />
-                          <ReferenceLine x={95} stroke="#ef4444" strokeDasharray="5 5" />
-                          <Bar dataKey="actual" radius={[0, 4, 4, 0]}>
-                            {filteredOTDData.slice(0, 15).map((entry, index) => (
-                              <Cell key={index} fill={entry.actual >= 95 ? '#10b981' : entry.actual >= 92 ? '#f59e0b' : '#ef4444'} />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
+                <div className="space-y-6">
+                  {/* Period indicator for delivery tab */}
+                  {latestWeek > 0 && (
+                    <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-sm text-gray-400">
+                        <Calendar className="w-4 h-4" />
+                        <span>
+                          Period: <strong className="text-orange-400">
+                            {selectedPeriod === 'week' ? `Week ${latestWeek} only` :
+                             selectedPeriod === 'month' ? `Last 4 weeks (${Math.max(1, latestWeek - 3)}-${latestWeek})` :
+                             selectedPeriod === 'quarter' ? `Last 13 weeks (${Math.max(1, latestWeek - 12)}-${latestWeek})` :
+                             `Full year (Weeks 1-${latestWeek})`}
+                          </strong>
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-4 text-sm">
+                        <span className="text-emerald-400">OTD Avg: {periodFilteredMetrics.otdPercent.toFixed(1)}%</span>
+                        <span className="text-blue-400">IFD Avg: {periodFilteredMetrics.ifdPercent.toFixed(1)}%</span>
+                      </div>
                     </div>
-                  </div>
+                  )}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                      <h3 className="text-lg font-semibold text-white mb-4">On-Time Delivery by Area ({periodFilteredOTDData.length})</h3>
+                      <div className="h-96">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={periodFilteredOTDData.slice(0, 15)} layout="vertical" margin={{ left: 100 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis type="number" domain={[0, 100]} stroke="#9ca3af" />
+                            <YAxis dataKey="area" type="category" stroke="#9ca3af" tick={{ fontSize: 10 }} />
+                            <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }} />
+                            <ReferenceLine x={95} stroke="#ef4444" strokeDasharray="5 5" />
+                            <Bar dataKey="actual" radius={[0, 4, 4, 0]}>
+                              {periodFilteredOTDData.slice(0, 15).map((entry, index) => (
+                                <Cell key={index} fill={entry.actual >= 95 ? '#10b981' : entry.actual >= 92 ? '#f59e0b' : '#ef4444'} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
 
-                  <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-                    <h3 className="text-lg font-semibold text-white mb-4">In-Full Delivery by Area ({filteredIFDData.length})</h3>
-                    <div className="h-96">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={filteredIFDData.slice(0, 15)} layout="vertical" margin={{ left: 100 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                          <XAxis type="number" domain={[0, 100]} stroke="#9ca3af" />
-                          <YAxis dataKey="area" type="category" stroke="#9ca3af" tick={{ fontSize: 10 }} />
-                          <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }} />
-                          <ReferenceLine x={92} stroke="#ef4444" strokeDasharray="5 5" />
-                          <Bar dataKey="actual" radius={[0, 4, 4, 0]}>
-                            {filteredIFDData.slice(0, 15).map((entry, index) => (
-                              <Cell key={index} fill={entry.actual >= 92 ? '#10b981' : entry.actual >= 88 ? '#f59e0b' : '#ef4444'} />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
+                    <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                      <h3 className="text-lg font-semibold text-white mb-4">In-Full Delivery by Area ({periodFilteredIFDData.length})</h3>
+                      <div className="h-96">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={periodFilteredIFDData.slice(0, 15)} layout="vertical" margin={{ left: 100 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis type="number" domain={[0, 100]} stroke="#9ca3af" />
+                            <YAxis dataKey="area" type="category" stroke="#9ca3af" tick={{ fontSize: 10 }} />
+                            <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }} />
+                            <ReferenceLine x={92} stroke="#ef4444" strokeDasharray="5 5" />
+                            <Bar dataKey="actual" radius={[0, 4, 4, 0]}>
+                              {periodFilteredIFDData.slice(0, 15).map((entry, index) => (
+                                <Cell key={index} fill={entry.actual >= 92 ? '#10b981' : entry.actual >= 88 ? '#f59e0b' : '#ef4444'} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
                     </div>
                   </div>
                 </div>

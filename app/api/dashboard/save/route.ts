@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '@/lib/supabase-server'
 
+export const dynamic = 'force-dynamic'
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = getServerSupabase()
@@ -9,7 +11,7 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await request.json()
-    const { fileName, metrics, kpiData, otdData, ifdData, concerns } = data
+    const { fileName, metrics, kpiData, otdData, ifdData, concerns, weeklyOTD, weeklyIFD, latestWeek } = data
 
     // Save dashboard record
     const { data: dashboard, error: dashboardError } = await supabase
@@ -22,6 +24,7 @@ export async function POST(request: NextRequest) {
         otd_percent: metrics.otdPercent,
         ifd_percent: metrics.ifdPercent,
         lhc_advance: metrics.lhcAdvance,
+        latest_week: latestWeek || 0,
         created_at: new Date().toISOString(),
       })
       .select()
@@ -117,6 +120,55 @@ export async function POST(request: NextRequest) {
 
       if (concernError) {
         console.error('Concerns save error:', concernError)
+      }
+    }
+
+    // Save weekly OTD data
+    if (weeklyOTD && weeklyOTD.length > 0) {
+      // Insert in batches of 500 to avoid payload limits
+      const batchSize = 500
+      for (let i = 0; i < weeklyOTD.length; i += batchSize) {
+        const batch = weeklyOTD.slice(i, i + batchSize).map((w: any) => ({
+          dashboard_id: dashboardId,
+          region: w.region,
+          area: w.area,
+          kpi_type: 'OTD',
+          week_number: w.weekNumber,
+          plan: w.plan,
+          actual: w.actual,
+        }))
+
+        const { error: weeklyOTDError } = await supabase
+          .from('delivery_kpi_weekly')
+          .insert(batch)
+
+        if (weeklyOTDError) {
+          console.error('Weekly OTD save error:', weeklyOTDError)
+        }
+      }
+    }
+
+    // Save weekly IFD data
+    if (weeklyIFD && weeklyIFD.length > 0) {
+      const batchSize = 500
+      for (let i = 0; i < weeklyIFD.length; i += batchSize) {
+        const batch = weeklyIFD.slice(i, i + batchSize).map((w: any) => ({
+          dashboard_id: dashboardId,
+          region: w.region,
+          area: w.area,
+          kpi_type: 'IFD',
+          week_number: w.weekNumber,
+          plan: w.plan,
+          actual: w.actual,
+        }))
+
+        const { error: weeklyIFDError } = await supabase
+          .from('delivery_kpi_weekly')
+          .insert(batch)
+
+        if (weeklyIFDError) {
+          console.error('Weekly IFD save error:', weeklyIFDError)
+        }
       }
     }
 

@@ -18,6 +18,16 @@ export interface DeliveryKPI {
   variance: number
 }
 
+// Weekly time-series data for OTD/IFD
+export interface WeeklyDeliveryData {
+  region: string
+  area: string
+  kpiType: 'OTD' | 'IFD'
+  weekNumber: number
+  plan: number | null
+  actual: number | null
+}
+
 export interface DashboardMetrics {
   freightBooking: number
   gm2Percent: number
@@ -29,6 +39,10 @@ export interface DashboardMetrics {
   otdData: DeliveryKPI[]
   ifdData: DeliveryKPI[]
   concerns: ConcernItem[]
+  // Weekly time-series data for time period filtering
+  weeklyOTD: WeeklyDeliveryData[]
+  weeklyIFD: WeeklyDeliveryData[]
+  latestWeek: number // The latest week number with data
 }
 
 export interface ConcernItem {
@@ -63,6 +77,9 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
     otdData: [],
     ifdData: [],
     concerns: [],
+    weeklyOTD: [],
+    weeklyIFD: [],
+    latestWeek: 0,
   }
 
   // Process Weekly Business Tracker
@@ -126,7 +143,7 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
     metrics.pbtPercent = pbtCount > 0 ? pbtSum / pbtCount : 0
   }
 
-  // Process OTD
+  // Process OTD with weekly time-series data
   if (workbook.SheetNames.includes('Database On Time Delivery KPI')) {
     const sheet = workbook.Sheets['Database On Time Delivery KPI']
     const data = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][]
@@ -135,6 +152,29 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
     let otdSum = 0
     let otdCount = 0
 
+    // Find week columns in header row (usually row 0 or 1)
+    // Headers look like: Region Name, Area Name, KPI, Week-1, Week-1, Week-2, Week-2, ...
+    // Each week has Plan and Actual columns alternating
+    const headerRow = data[0] || []
+    const weekColumns: { week: number; planIdx: number; actualIdx: number }[] = []
+
+    for (let j = 0; j < headerRow.length; j++) {
+      const header = String(headerRow[j] || '').trim()
+      const weekMatch = header.match(/Week-(\d+)/i)
+      if (weekMatch) {
+        const weekNum = parseInt(weekMatch[1])
+        // Check if this week already exists (we need pairs)
+        const existing = weekColumns.find(w => w.week === weekNum)
+        if (!existing) {
+          // First occurrence is Plan
+          weekColumns.push({ week: weekNum, planIdx: j, actualIdx: j + 1 })
+        }
+      }
+    }
+
+    // Track latest week with valid data
+    let maxWeekWithData = 0
+
     for (let i = 2; i < data.length; i++) {
       const row = data[i]
       if (!row) continue
@@ -146,47 +186,71 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
       const area = row[1] ? String(row[1]).trim() : ''
       if (!area || area === 'Area Name') continue
 
-      // Get latest actual value
-      let actual = null
-      for (let j = row.length - 1; j >= 3; j--) {
-        if (typeof row[j] === 'number') {
-          actual = row[j]
-          break
+      // Extract weekly data for this area
+      let latestActual: number | null = null
+      let latestPlan: number | null = null
+
+      for (const wc of weekColumns) {
+        const planVal = row[wc.planIdx]
+        const actualVal = row[wc.actualIdx]
+
+        const plan = typeof planVal === 'number' ? planVal : null
+        const actual = typeof actualVal === 'number' ? actualVal : null
+
+        if (actual !== null) {
+          const planPct = plan !== null ? (plan <= 1 ? plan * 100 : plan) : null
+          const actualPct = actual <= 1 ? actual * 100 : actual
+
+          metrics.weeklyOTD.push({
+            region: currentRegion,
+            area,
+            kpiType: 'OTD',
+            weekNumber: wc.week,
+            plan: planPct,
+            actual: actualPct,
+          })
+
+          latestActual = actualPct
+          latestPlan = planPct
+          if (wc.week > maxWeekWithData) {
+            maxWeekWithData = wc.week
+          }
         }
       }
 
-      if (actual !== null) {
-        const actualPct = actual <= 1 ? actual * 100 : actual
-        otdSum += actualPct
+      // Use latest actual for summary
+      if (latestActual !== null) {
+        otdSum += latestActual
         otdCount++
 
         metrics.otdData.push({
           region: currentRegion,
           area,
-          plan: 95,
-          actual: actualPct,
-          variance: actualPct - 95,
+          plan: latestPlan || 95,
+          actual: latestActual,
+          variance: latestActual - (latestPlan || 95),
         })
 
-        // Check for concerns
-        if (actualPct < 92) {
+        // Check for concerns using latest data
+        if (latestActual < 92) {
           metrics.concerns.push({
-            priority: actualPct < 90 ? 'critical' : 'warning',
+            priority: latestActual < 90 ? 'critical' : 'warning',
             region: currentRegion,
             area,
             kpi: 'On-Time Delivery',
-            actual: `${actualPct.toFixed(1)}%`,
+            actual: `${latestActual.toFixed(1)}%`,
             target: '95%',
-            gap: `${(actualPct - 95).toFixed(1)}%`,
+            gap: `${(latestActual - 95).toFixed(1)}%`,
           })
         }
       }
     }
 
     metrics.otdPercent = otdCount > 0 ? otdSum / otdCount : 0
+    metrics.latestWeek = Math.max(metrics.latestWeek, maxWeekWithData)
   }
 
-  // Process IFD
+  // Process IFD with weekly time-series data
   if (workbook.SheetNames.includes('Database In Full Delivery KPI')) {
     const sheet = workbook.Sheets['Database In Full Delivery KPI']
     const data = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][]
@@ -195,6 +259,24 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
     let ifdSum = 0
     let ifdCount = 0
 
+    // Find week columns in header row
+    const headerRow = data[0] || []
+    const weekColumns: { week: number; planIdx: number; actualIdx: number }[] = []
+
+    for (let j = 0; j < headerRow.length; j++) {
+      const header = String(headerRow[j] || '').trim()
+      const weekMatch = header.match(/Week-(\d+)/i)
+      if (weekMatch) {
+        const weekNum = parseInt(weekMatch[1])
+        const existing = weekColumns.find(w => w.week === weekNum)
+        if (!existing) {
+          weekColumns.push({ week: weekNum, planIdx: j, actualIdx: j + 1 })
+        }
+      }
+    }
+
+    let maxWeekWithData = 0
+
     for (let i = 2; i < data.length; i++) {
       const row = data[i]
       if (!row) continue
@@ -206,42 +288,65 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
       const area = row[1] ? String(row[1]).trim() : ''
       if (!area || area === 'Area Name') continue
 
-      let actual = null
-      for (let j = row.length - 1; j >= 3; j--) {
-        if (typeof row[j] === 'number') {
-          actual = row[j]
-          break
+      let latestActual: number | null = null
+      let latestPlan: number | null = null
+
+      for (const wc of weekColumns) {
+        const planVal = row[wc.planIdx]
+        const actualVal = row[wc.actualIdx]
+
+        const plan = typeof planVal === 'number' ? planVal : null
+        const actual = typeof actualVal === 'number' ? actualVal : null
+
+        if (actual !== null) {
+          const planPct = plan !== null ? (plan <= 1 ? plan * 100 : plan) : null
+          const actualPct = actual <= 1 ? actual * 100 : actual
+
+          metrics.weeklyIFD.push({
+            region: currentRegion,
+            area,
+            kpiType: 'IFD',
+            weekNumber: wc.week,
+            plan: planPct,
+            actual: actualPct,
+          })
+
+          latestActual = actualPct
+          latestPlan = planPct
+          if (wc.week > maxWeekWithData) {
+            maxWeekWithData = wc.week
+          }
         }
       }
 
-      if (actual !== null) {
-        const actualPct = actual <= 1 ? actual * 100 : actual
-        ifdSum += actualPct
+      if (latestActual !== null) {
+        ifdSum += latestActual
         ifdCount++
 
         metrics.ifdData.push({
           region: currentRegion,
           area,
-          plan: 92,
-          actual: actualPct,
-          variance: actualPct - 92,
+          plan: latestPlan || 92,
+          actual: latestActual,
+          variance: latestActual - (latestPlan || 92),
         })
 
-        if (actualPct < 88) {
+        if (latestActual < 88) {
           metrics.concerns.push({
-            priority: actualPct < 85 ? 'critical' : 'warning',
+            priority: latestActual < 85 ? 'critical' : 'warning',
             region: currentRegion,
             area,
             kpi: 'In-Full Delivery',
-            actual: `${actualPct.toFixed(1)}%`,
+            actual: `${latestActual.toFixed(1)}%`,
             target: '92%',
-            gap: `${(actualPct - 92).toFixed(1)}%`,
+            gap: `${(latestActual - 92).toFixed(1)}%`,
           })
         }
       }
     }
 
     metrics.ifdPercent = ifdCount > 0 ? ifdSum / ifdCount : 0
+    metrics.latestWeek = Math.max(metrics.latestWeek, maxWeekWithData)
   }
 
   // Sort concerns by priority
@@ -252,4 +357,73 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
   })
 
   return metrics
+}
+
+// Helper function to filter weekly data by time period
+export function filterByPeriod(
+  weeklyData: WeeklyDeliveryData[],
+  latestWeek: number,
+  period: 'week' | 'month' | 'quarter' | 'year'
+): WeeklyDeliveryData[] {
+  const weeksToInclude = {
+    week: 1,
+    month: 4,
+    quarter: 13,
+    year: 52,
+  }[period]
+
+  const startWeek = Math.max(1, latestWeek - weeksToInclude + 1)
+
+  return weeklyData.filter(d => d.weekNumber >= startWeek && d.weekNumber <= latestWeek)
+}
+
+// Calculate aggregated metrics for filtered data
+export function calculateFilteredMetrics(
+  filteredOTD: WeeklyDeliveryData[],
+  filteredIFD: WeeklyDeliveryData[],
+  selectedRegions: string[],
+  selectedAreas: string[]
+): { otdPercent: number; ifdPercent: number } {
+  // Apply region/area filters
+  const filterBySelection = (d: WeeklyDeliveryData) => {
+    if (selectedRegions.length > 0 && !selectedRegions.includes(d.region)) return false
+    if (selectedAreas.length > 0 && !selectedAreas.includes(d.area)) return false
+    return true
+  }
+
+  const filteredOTDData = filteredOTD.filter(filterBySelection)
+  const filteredIFDData = filteredIFD.filter(filterBySelection)
+
+  // Group by area and calculate average for each area, then average across areas
+  const otdByArea: Record<string, { sum: number; count: number }> = {}
+  filteredOTDData.forEach(d => {
+    if (d.actual !== null) {
+      if (!otdByArea[d.area]) otdByArea[d.area] = { sum: 0, count: 0 }
+      otdByArea[d.area].sum += d.actual
+      otdByArea[d.area].count++
+    }
+  })
+
+  const ifdByArea: Record<string, { sum: number; count: number }> = {}
+  filteredIFDData.forEach(d => {
+    if (d.actual !== null) {
+      if (!ifdByArea[d.area]) ifdByArea[d.area] = { sum: 0, count: 0 }
+      ifdByArea[d.area].sum += d.actual
+      ifdByArea[d.area].count++
+    }
+  })
+
+  // Calculate overall averages
+  const otdAreas = Object.values(otdByArea)
+  const ifdAreas = Object.values(ifdByArea)
+
+  const otdPercent = otdAreas.length > 0
+    ? otdAreas.reduce((sum, a) => sum + (a.sum / a.count), 0) / otdAreas.length
+    : 0
+
+  const ifdPercent = ifdAreas.length > 0
+    ? ifdAreas.reduce((sum, a) => sum + (a.sum / a.count), 0) / ifdAreas.length
+    : 0
+
+  return { otdPercent, ifdPercent }
 }

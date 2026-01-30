@@ -48,10 +48,25 @@ export async function GET() {
       .select('*')
       .eq('dashboard_id', dashboard.id)
 
+    // Get weekly OTD data
+    const { data: weeklyOTD } = await supabase
+      .from('delivery_kpi_weekly')
+      .select('*')
+      .eq('dashboard_id', dashboard.id)
+      .eq('kpi_type', 'OTD')
+
+    // Get weekly IFD data
+    const { data: weeklyIFD } = await supabase
+      .from('delivery_kpi_weekly')
+      .select('*')
+      .eq('dashboard_id', dashboard.id)
+      .eq('kpi_type', 'IFD')
+
     return NextResponse.json({
       data: {
         fileName: dashboard.file_name,
         createdAt: dashboard.created_at,
+        latestWeek: dashboard.latest_week || 0,
         metrics: {
           freightBooking: dashboard.freight_booking,
           gm2Percent: dashboard.gm2_percent,
@@ -91,6 +106,22 @@ export async function GET() {
           actual: c.actual,
           target: c.target,
           gap: c.gap,
+        })),
+        weeklyOTD: (weeklyOTD || []).map(w => ({
+          region: w.region,
+          area: w.area,
+          kpiType: w.kpi_type,
+          weekNumber: w.week_number,
+          plan: w.plan,
+          actual: w.actual,
+        })),
+        weeklyIFD: (weeklyIFD || []).map(w => ({
+          region: w.region,
+          area: w.area,
+          kpiType: w.kpi_type,
+          weekNumber: w.week_number,
+          plan: w.plan,
+          actual: w.actual,
         })),
       }
     })
