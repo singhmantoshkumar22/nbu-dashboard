@@ -151,48 +151,39 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
     let currentRegion = ''
     let otdSum = 0
     let otdCount = 0
-
-    // Find week columns in header row (usually row 0 or 1)
-    // Headers look like: Region Name, Area Name, KPI, Week-1, Week-1, Week-2, Week-2, ...
-    // Each week has Plan and Actual columns alternating
-    const headerRow = data[0] || []
-    const weekColumns: { week: number; planIdx: number; actualIdx: number }[] = []
-
-    for (let j = 0; j < headerRow.length; j++) {
-      const header = String(headerRow[j] || '').trim()
-      const weekMatch = header.match(/Week-(\d+)/i)
-      if (weekMatch) {
-        const weekNum = parseInt(weekMatch[1])
-        // Check if this week already exists (we need pairs)
-        const existing = weekColumns.find(w => w.week === weekNum)
-        if (!existing) {
-          // First occurrence is Plan
-          weekColumns.push({ week: weekNum, planIdx: j, actualIdx: j + 1 })
-        }
-      }
-    }
-
-    // Track latest week with valid data
     let maxWeekWithData = 0
 
-    for (let i = 2; i < data.length; i++) {
+    // Data structure:
+    // Row 0 = numbers (1, 2, 3...)
+    // Row 1 = Week labels (Week-1, Week-2...)
+    // Row 2 = Column headers (Region Name, Area Name, KPI, Plan, Actual...)
+    // Row 3+ = Data
+    // Columns: 0=Region, 1=Area, 2=KPI, 3+=Plan/Actual pairs (alternating)
+
+    for (let i = 3; i < data.length; i++) {
       const row = data[i]
       if (!row) continue
 
+      // Track region (column 0)
       if (row[0] && String(row[0]).trim() && !['Region Name', ''].includes(String(row[0]).trim())) {
         currentRegion = String(row[0]).trim()
       }
 
+      // Area is in column 1
       const area = row[1] ? String(row[1]).trim() : ''
-      if (!area || area === 'Area Name') continue
+      if (!area || area === 'Area Name' || area === 'Region Name') continue
 
-      // Extract weekly data for this area
+      // Extract weekly data by iterating through Plan/Actual pairs
+      // Start from column 3, pairs are at (3,4), (5,6), (7,8), etc.
       let latestActual: number | null = null
       let latestPlan: number | null = null
+      let weekNumber = 0
 
-      for (const wc of weekColumns) {
-        const planVal = row[wc.planIdx]
-        const actualVal = row[wc.actualIdx]
+      // Iterate through all Plan/Actual pairs starting from column 3
+      for (let j = 3; j < row.length - 1; j += 2) {
+        weekNumber++
+        const planVal = row[j]
+        const actualVal = row[j + 1]
 
         const plan = typeof planVal === 'number' ? planVal : null
         const actual = typeof actualVal === 'number' ? actualVal : null
@@ -205,15 +196,15 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
             region: currentRegion,
             area,
             kpiType: 'OTD',
-            weekNumber: wc.week,
+            weekNumber,
             plan: planPct,
             actual: actualPct,
           })
 
           latestActual = actualPct
           latestPlan = planPct
-          if (wc.week > maxWeekWithData) {
-            maxWeekWithData = wc.week
+          if (weekNumber > maxWeekWithData) {
+            maxWeekWithData = weekNumber
           }
         }
       }
@@ -258,26 +249,10 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
     let currentRegion = ''
     let ifdSum = 0
     let ifdCount = 0
-
-    // Find week columns in header row
-    const headerRow = data[0] || []
-    const weekColumns: { week: number; planIdx: number; actualIdx: number }[] = []
-
-    for (let j = 0; j < headerRow.length; j++) {
-      const header = String(headerRow[j] || '').trim()
-      const weekMatch = header.match(/Week-(\d+)/i)
-      if (weekMatch) {
-        const weekNum = parseInt(weekMatch[1])
-        const existing = weekColumns.find(w => w.week === weekNum)
-        if (!existing) {
-          weekColumns.push({ week: weekNum, planIdx: j, actualIdx: j + 1 })
-        }
-      }
-    }
-
     let maxWeekWithData = 0
 
-    for (let i = 2; i < data.length; i++) {
+    // Data starts from row 3 (row 0=numbers, row 1=week labels, row 2=headers)
+    for (let i = 3; i < data.length; i++) {
       const row = data[i]
       if (!row) continue
 
@@ -286,14 +261,17 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
       }
 
       const area = row[1] ? String(row[1]).trim() : ''
-      if (!area || area === 'Area Name') continue
+      if (!area || area === 'Area Name' || area === 'Region Name') continue
 
       let latestActual: number | null = null
       let latestPlan: number | null = null
+      let weekNumber = 0
 
-      for (const wc of weekColumns) {
-        const planVal = row[wc.planIdx]
-        const actualVal = row[wc.actualIdx]
+      // Iterate through all Plan/Actual pairs starting from column 3
+      for (let j = 3; j < row.length - 1; j += 2) {
+        weekNumber++
+        const planVal = row[j]
+        const actualVal = row[j + 1]
 
         const plan = typeof planVal === 'number' ? planVal : null
         const actual = typeof actualVal === 'number' ? actualVal : null
@@ -306,15 +284,15 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
             region: currentRegion,
             area,
             kpiType: 'IFD',
-            weekNumber: wc.week,
+            weekNumber,
             plan: planPct,
             actual: actualPct,
           })
 
           latestActual = actualPct
           latestPlan = planPct
-          if (wc.week > maxWeekWithData) {
-            maxWeekWithData = wc.week
+          if (weekNumber > maxWeekWithData) {
+            maxWeekWithData = weekNumber
           }
         }
       }
