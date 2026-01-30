@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import {
   Upload, BarChart3, TrendingUp, AlertTriangle, CheckCircle, XCircle,
-  ChevronDown, Home, Database, Filter, RefreshCw, History, Menu, X, FileSpreadsheet
+  ChevronDown, Home, Database, Filter, RefreshCw, History, Menu, X, FileSpreadsheet, Calendar
 } from 'lucide-react'
 import { processExcelFile, DashboardMetrics, KPIData, DeliveryKPI, ConcernItem } from '@/lib/kpi-processor'
 import { uploadFile } from '@/lib/supabase'
@@ -41,6 +41,7 @@ export default function Dashboard() {
   const [selectedRegions, setSelectedRegions] = useState<string[]>([])
   const [selectedAreas, setSelectedAreas] = useState<string[]>([])
   const [selectedKPI, setSelectedKPI] = useState<string>('Freight Booking')
+  const [selectedPeriod, setSelectedPeriod] = useState<string>('month')
 
   // Get unique values for filters
   const regions = useMemo(() => {
@@ -311,6 +312,41 @@ export default function Dashboard() {
               </div>
             )}
           </div>
+
+          {/* Time Period Selector */}
+          {metrics && (
+            <div className="mb-6">
+              <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
+                <Calendar className="w-4 h-4" />
+                Time Period
+              </h3>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { id: 'week', label: 'Week' },
+                  { id: 'month', label: 'Month' },
+                  { id: 'quarter', label: 'Quarter' },
+                  { id: 'year', label: 'Year' },
+                ].map((period) => (
+                  <button
+                    key={period.id}
+                    onClick={() => setSelectedPeriod(period.id)}
+                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                      selectedPeriod === period.id
+                        ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white'
+                        : 'bg-slate-700 text-gray-300 hover:bg-slate-600'
+                    }`}
+                  >
+                    {period.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Showing: {selectedPeriod === 'week' ? 'Last 7 days' :
+                          selectedPeriod === 'month' ? 'Last 30 days' :
+                          selectedPeriod === 'quarter' ? 'Last 90 days' : 'Last 365 days'}
+              </p>
+            </div>
+          )}
 
           {/* Filters */}
           {metrics && (
