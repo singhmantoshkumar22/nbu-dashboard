@@ -62,6 +62,12 @@ export async function GET() {
       .eq('dashboard_id', dashboard.id)
       .eq('kpi_type', 'IFD')
 
+    // Get weekly KPI data (Freight, GM2%, PBT%, LHC)
+    const { data: weeklyKPI } = await supabase
+      .from('kpi_weekly')
+      .select('*')
+      .eq('dashboard_id', dashboard.id)
+
     return NextResponse.json({
       data: {
         fileName: dashboard.file_name,
@@ -121,6 +127,14 @@ export async function GET() {
           kpiType: w.kpi_type,
           weekNumber: w.week_number,
           plan: w.plan,
+          actual: w.actual,
+        })),
+        weeklyKPI: (weeklyKPI || []).map(w => ({
+          region: w.region,
+          area: w.area,
+          kpi: w.kpi,
+          weekNumber: w.week_number,
+          planned: w.planned,
           actual: w.actual,
         })),
       }

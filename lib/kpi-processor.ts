@@ -28,6 +28,16 @@ export interface WeeklyDeliveryData {
   actual: number | null
 }
 
+// Weekly KPI data for Freight, GM2%, PBT%, LHC
+export interface WeeklyKPIData {
+  region: string
+  area: string
+  kpi: string
+  weekNumber: number
+  planned: number | null
+  actual: number | null
+}
+
 export interface DashboardMetrics {
   freightBooking: number
   gm2Percent: number
@@ -42,6 +52,7 @@ export interface DashboardMetrics {
   // Weekly time-series data for time period filtering
   weeklyOTD: WeeklyDeliveryData[]
   weeklyIFD: WeeklyDeliveryData[]
+  weeklyKPI: WeeklyKPIData[] // Weekly data for Freight, GM2%, PBT%, LHC
   latestWeek: number // The latest week number with data
 }
 
@@ -79,6 +90,7 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
     concerns: [],
     weeklyOTD: [],
     weeklyIFD: [],
+    weeklyKPI: [],
     latestWeek: 0,
   }
 
@@ -87,6 +99,24 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
     const sheet = workbook.Sheets['Weekly Business Tracker']
     const data = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][]
 
+    // Find week columns: Row 0 has "Week - X (date)" headers
+    // Each week has 3 columns: Planned (at week col), Actual (week col + 1), Score (week col + 2)
+    const row0 = data[0] || []
+    const weekColumns: { col: number; weekNum: number }[] = []
+
+    for (let j = 0; j < row0.length; j++) {
+      const header = String(row0[j] || '')
+      // Match "Week - 43" or "Week-43" patterns
+      const weekMatch = header.match(/Week\s*-?\s*(\d+)/i)
+      if (weekMatch) {
+        const weekNum = parseInt(weekMatch[1])
+        weekColumns.push({ col: j, weekNum })
+      }
+    }
+
+    // Track max week number for KPI data
+    let maxKPIWeek = 0
+
     let currentRegion = ''
     let freightSum = 0
     let gm2Sum = 0
@@ -94,7 +124,10 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
     let pbtSum = 0
     let pbtCount = 0
 
-    for (let i = 1; i < data.length; i++) {
+    // KPIs we want to track weekly
+    const trackableKPIs = ['Freight Booking', 'GM2% on Sale', 'EstimatedPBT%', 'LHC Advance %']
+
+    for (let i = 2; i < data.length; i++) {
       const row = data[i]
       if (!row) continue
 
@@ -124,7 +157,7 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
         variance,
       })
 
-      // Aggregate metrics
+      // Aggregate metrics (YTD totals)
       if (kpi === 'Freight Booking' && fy25Actual) {
         freightSum += fy25Actual
       }
@@ -136,11 +169,36 @@ export function processExcelFile(buffer: ArrayBuffer): DashboardMetrics {
         pbtSum += fy25Actual
         pbtCount++
       }
+
+      // Extract weekly data for trackable KPIs
+      if (trackableKPIs.includes(kpi)) {
+        for (const wc of weekColumns) {
+          // Actual is at col + 1 from the week header
+          const actualVal = row[wc.col + 1]
+          const plannedVal = row[wc.col]
+
+          if (typeof actualVal === 'number' && !isNaN(actualVal)) {
+            metrics.weeklyKPI.push({
+              region: currentRegion,
+              area,
+              kpi,
+              weekNumber: wc.weekNum,
+              planned: typeof plannedVal === 'number' ? plannedVal : null,
+              actual: actualVal,
+            })
+
+            if (wc.weekNum > maxKPIWeek) {
+              maxKPIWeek = wc.weekNum
+            }
+          }
+        }
+      }
     }
 
     metrics.freightBooking = freightSum
     metrics.gm2Percent = gm2Count > 0 ? gm2Sum / gm2Count : 0
     metrics.pbtPercent = pbtCount > 0 ? pbtSum / pbtCount : 0
+    metrics.latestWeek = Math.max(metrics.latestWeek, maxKPIWeek)
   }
 
   // Process OTD with weekly time-series data
@@ -404,4 +462,64 @@ export function calculateFilteredMetrics(
     : 0
 
   return { otdPercent, ifdPercent }
+}
+
+// Calculate filtered metrics for all KPIs based on time period
+export function calculateFilteredKPIMetrics(
+  weeklyKPI: WeeklyKPIData[],
+  latestWeek: number,
+  period: 'week' | 'month' | 'quarter' | 'year',
+  selectedRegions: string[],
+  selectedAreas: string[]
+): { freightBooking: number; gm2Percent: number; pbtPercent: number; lhcAdvance: number } {
+  if (weeklyKPI.length === 0 || latestWeek === 0) {
+    return { freightBooking: 0, gm2Percent: 0, pbtPercent: 0, lhcAdvance: 0 }
+  }
+
+  const weeksToInclude = {
+    week: 1,
+    month: 4,
+    quarter: 13,
+    year: 52,
+  }[period]
+
+  const startWeek = Math.max(1, latestWeek - weeksToInclude + 1)
+
+  // Filter by period and selection
+  const filtered = weeklyKPI.filter(d => {
+    if (d.weekNumber < startWeek || d.weekNumber > latestWeek) return false
+    if (selectedRegions.length > 0 && !selectedRegions.includes(d.region)) return false
+    if (selectedAreas.length > 0 && !selectedAreas.includes(d.area)) return false
+    return true
+  })
+
+  // Aggregate by KPI type
+  const kpiSums: Record<string, { sum: number; count: number }> = {
+    'Freight Booking': { sum: 0, count: 0 },
+    'GM2% on Sale': { sum: 0, count: 0 },
+    'EstimatedPBT%': { sum: 0, count: 0 },
+    'LHC Advance %': { sum: 0, count: 0 },
+  }
+
+  filtered.forEach(d => {
+    if (d.actual !== null && kpiSums[d.kpi]) {
+      kpiSums[d.kpi].sum += d.actual
+      kpiSums[d.kpi].count++
+    }
+  })
+
+  // For Freight Booking, sum all values
+  // For percentages (GM2%, PBT%, LHC%), average them
+  return {
+    freightBooking: kpiSums['Freight Booking'].sum,
+    gm2Percent: kpiSums['GM2% on Sale'].count > 0
+      ? kpiSums['GM2% on Sale'].sum / kpiSums['GM2% on Sale'].count
+      : 0,
+    pbtPercent: kpiSums['EstimatedPBT%'].count > 0
+      ? kpiSums['EstimatedPBT%'].sum / kpiSums['EstimatedPBT%'].count
+      : 0,
+    lhcAdvance: kpiSums['LHC Advance %'].count > 0
+      ? kpiSums['LHC Advance %'].sum / kpiSums['LHC Advance %'].count
+      : 0,
+  }
 }

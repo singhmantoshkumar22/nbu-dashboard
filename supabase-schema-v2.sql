@@ -22,3 +22,20 @@ CREATE INDEX IF NOT EXISTS idx_delivery_kpi_weekly_dashboard ON delivery_kpi_wee
 CREATE INDEX IF NOT EXISTS idx_delivery_kpi_weekly_type ON delivery_kpi_weekly(kpi_type);
 CREATE INDEX IF NOT EXISTS idx_delivery_kpi_weekly_week ON delivery_kpi_weekly(week_number);
 CREATE INDEX IF NOT EXISTS idx_delivery_kpi_weekly_area ON delivery_kpi_weekly(area);
+
+-- Weekly KPI data table (stores Freight Booking, GM2%, PBT%, LHC Advance weekly data)
+CREATE TABLE IF NOT EXISTS kpi_weekly (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  dashboard_id UUID REFERENCES dashboards(id) ON DELETE CASCADE,
+  region TEXT,
+  area TEXT,
+  kpi TEXT, -- 'Freight Booking', 'GM2% on Sale', 'EstimatedPBT%', 'LHC Advance %'
+  week_number INTEGER,
+  planned DECIMAL,
+  actual DECIMAL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_kpi_weekly_dashboard ON kpi_weekly(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_kpi_weekly_kpi ON kpi_weekly(kpi);
+CREATE INDEX IF NOT EXISTS idx_kpi_weekly_week ON kpi_weekly(week_number);

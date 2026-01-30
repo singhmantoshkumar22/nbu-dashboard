@@ -5,7 +5,7 @@ import {
   Upload, BarChart3, TrendingUp, AlertTriangle, CheckCircle, XCircle,
   ChevronDown, Home, Database, Filter, RefreshCw, History, Menu, X, FileSpreadsheet, Calendar
 } from 'lucide-react'
-import { processExcelFile, DashboardMetrics, KPIData, DeliveryKPI, ConcernItem, WeeklyDeliveryData, filterByPeriod, calculateFilteredMetrics } from '@/lib/kpi-processor'
+import { processExcelFile, DashboardMetrics, KPIData, DeliveryKPI, ConcernItem, WeeklyDeliveryData, WeeklyKPIData, filterByPeriod, calculateFilteredMetrics, calculateFilteredKPIMetrics } from '@/lib/kpi-processor'
 import { uploadFile } from '@/lib/supabase'
 import KPICard from '@/components/KPICard'
 import {
@@ -46,9 +46,11 @@ export default function Dashboard() {
   // Weekly time-series data for time period filtering
   const [weeklyOTD, setWeeklyOTD] = useState<WeeklyDeliveryData[]>([])
   const [weeklyIFD, setWeeklyIFD] = useState<WeeklyDeliveryData[]>([])
+  const [weeklyKPI, setWeeklyKPI] = useState<WeeklyKPIData[]>([])
   const [latestWeek, setLatestWeek] = useState<number>(0)
   const [latestWeekOTD, setLatestWeekOTD] = useState<number>(0)
   const [latestWeekIFD, setLatestWeekIFD] = useState<number>(0)
+  const [latestWeekKPI, setLatestWeekKPI] = useState<number>(0)
 
   // Get unique values for filters
   const regions = useMemo(() => {
@@ -147,6 +149,21 @@ export default function Dashboard() {
 
     return result
   }, [weeklyOTD, weeklyIFD, latestWeek, latestWeekOTD, latestWeekIFD, selectedPeriod, selectedRegions, selectedAreas, metrics])
+
+  // Calculate time-period filtered KPI metrics (Freight, GM2%, PBT%, LHC)
+  const periodFilteredKPIMetrics = useMemo(() => {
+    if (weeklyKPI.length === 0 || latestWeekKPI === 0) {
+      // Fallback to overall metrics if no weekly data
+      return {
+        freightBooking: metrics?.freightBooking || 0,
+        gm2Percent: metrics?.gm2Percent || 0,
+        pbtPercent: metrics?.pbtPercent || 0,
+        lhcAdvance: metrics?.lhcAdvance || 0,
+      }
+    }
+
+    return calculateFilteredKPIMetrics(weeklyKPI, latestWeekKPI, selectedPeriod, selectedRegions, selectedAreas)
+  }, [weeklyKPI, latestWeekKPI, selectedPeriod, selectedRegions, selectedAreas, metrics])
 
   // Get period-specific data for charts
   const periodFilteredOTDData = useMemo(() => {
@@ -283,6 +300,7 @@ export default function Dashboard() {
             concerns: json.data.concerns,
             weeklyOTD: json.data.weeklyOTD || [],
             weeklyIFD: json.data.weeklyIFD || [],
+            weeklyKPI: json.data.weeklyKPI || [],
             latestWeek: json.data.latestWeek || 0,
           })
           setFileName(json.data.fileName)
@@ -290,14 +308,18 @@ export default function Dashboard() {
           // Set weekly data for time period filtering
           const otdData = json.data.weeklyOTD || []
           const ifdData = json.data.weeklyIFD || []
+          const kpiData = json.data.weeklyKPI || []
           setWeeklyOTD(otdData)
           setWeeklyIFD(ifdData)
+          setWeeklyKPI(kpiData)
           setLatestWeek(json.data.latestWeek || 0)
-          // Calculate separate latest weeks for OTD and IFD
+          // Calculate separate latest weeks for OTD, IFD, and KPI
           const maxOTDWeek = otdData.length > 0 ? Math.max(...otdData.map((d: WeeklyDeliveryData) => d.weekNumber)) : 0
           const maxIFDWeek = ifdData.length > 0 ? Math.max(...ifdData.map((d: WeeklyDeliveryData) => d.weekNumber)) : 0
+          const maxKPIWeek = kpiData.length > 0 ? Math.max(...kpiData.map((d: WeeklyKPIData) => d.weekNumber)) : 0
           setLatestWeekOTD(maxOTDWeek)
           setLatestWeekIFD(maxIFDWeek)
+          setLatestWeekKPI(maxKPIWeek)
         }
       } catch (error) {
         console.error('Failed to load latest dashboard:', error)
@@ -339,14 +361,18 @@ export default function Dashboard() {
       // Set weekly data for time period filtering
       const otdData = data.weeklyOTD || []
       const ifdData = data.weeklyIFD || []
+      const kpiData = data.weeklyKPI || []
       setWeeklyOTD(otdData)
       setWeeklyIFD(ifdData)
+      setWeeklyKPI(kpiData)
       setLatestWeek(data.latestWeek || 0)
-      // Calculate separate latest weeks for OTD and IFD
+      // Calculate separate latest weeks for OTD, IFD, and KPI
       const maxOTDWeek = otdData.length > 0 ? Math.max(...otdData.map((d: WeeklyDeliveryData) => d.weekNumber)) : 0
       const maxIFDWeek = ifdData.length > 0 ? Math.max(...ifdData.map((d: WeeklyDeliveryData) => d.weekNumber)) : 0
+      const maxKPIWeek = kpiData.length > 0 ? Math.max(...kpiData.map((d: WeeklyKPIData) => d.weekNumber)) : 0
       setLatestWeekOTD(maxOTDWeek)
       setLatestWeekIFD(maxIFDWeek)
+      setLatestWeekKPI(maxKPIWeek)
 
       await fetch('/api/dashboard/save', {
         method: 'POST',
@@ -367,6 +393,7 @@ export default function Dashboard() {
           concerns: data.concerns,
           weeklyOTD: data.weeklyOTD,
           weeklyIFD: data.weeklyIFD,
+          weeklyKPI: data.weeklyKPI,
           latestWeek: data.latestWeek,
         }),
       })
@@ -491,6 +518,14 @@ export default function Dashboard() {
                   {latestWeekIFD > 0 && latestWeekIFD !== latestWeekOTD && (
                     <p className="text-xs text-blue-400 font-medium">
                       IFD: Weeks 1-{latestWeekIFD} (data available)
+                    </p>
+                  )}
+                  {latestWeekKPI > 0 && (
+                    <p className="text-xs text-green-400 font-medium">
+                      KPI: {selectedPeriod === 'week' ? `Week ${latestWeekKPI}` :
+                       selectedPeriod === 'month' ? `Weeks ${Math.max(1, latestWeekKPI - 3)}-${latestWeekKPI}` :
+                       selectedPeriod === 'quarter' ? `Weeks ${Math.max(1, latestWeekKPI - 12)}-${latestWeekKPI}` :
+                       `Weeks 1-${latestWeekKPI}`} ({weeklyKPI.length} records)
                     </p>
                   )}
                   <p className="text-xs text-gray-400 mt-1">
@@ -726,12 +761,12 @@ export default function Dashboard() {
                     </div>
                   )}
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-                    <KPICard title="Freight Booking" value={`₹${metrics.freightBooking.toFixed(1)} Cr`} icon="💰" status="blue" />
-                    <KPICard title="GM2% on Sale" value={`${metrics.gm2Percent.toFixed(1)}%`} target="8%" delta={((metrics.gm2Percent - 8) / 8) * 100} icon="📊" status={getRAGStatus(metrics.gm2Percent, 8)} />
-                    <KPICard title="Est. PBT%" value={`${metrics.pbtPercent.toFixed(1)}%`} target="3%" delta={((metrics.pbtPercent - 3) / 3) * 100} icon="💎" status={getRAGStatus(metrics.pbtPercent, 3)} />
+                    <KPICard title="Freight Booking" value={`₹${periodFilteredKPIMetrics.freightBooking.toFixed(1)} Cr`} icon="💰" status="blue" />
+                    <KPICard title="GM2% on Sale" value={`${periodFilteredKPIMetrics.gm2Percent.toFixed(1)}%`} target="8%" delta={((periodFilteredKPIMetrics.gm2Percent - 8) / 8) * 100} icon="📊" status={getRAGStatus(periodFilteredKPIMetrics.gm2Percent, 8)} />
+                    <KPICard title="Est. PBT%" value={`${periodFilteredKPIMetrics.pbtPercent.toFixed(1)}%`} target="3%" delta={((periodFilteredKPIMetrics.pbtPercent - 3) / 3) * 100} icon="💎" status={getRAGStatus(periodFilteredKPIMetrics.pbtPercent, 3)} />
                     <KPICard title="On-Time Delivery" value={`${periodFilteredMetrics.otdPercent.toFixed(1)}%`} target="95%" delta={((periodFilteredMetrics.otdPercent - 95) / 95) * 100} icon="🚚" status={getRAGStatus(periodFilteredMetrics.otdPercent, 95)} />
                     <KPICard title="In-Full Delivery" value={`${periodFilteredMetrics.ifdPercent.toFixed(1)}%`} target="92%" delta={((periodFilteredMetrics.ifdPercent - 92) / 92) * 100} icon="📦" status={getRAGStatus(periodFilteredMetrics.ifdPercent, 92)} />
-                    <KPICard title="LHC Advance" value={`${metrics.lhcAdvance.toFixed(1)}%`} target="80%" delta={((metrics.lhcAdvance - 80) / 80) * 100} icon="💳" status={getRAGStatus(metrics.lhcAdvance, 80)} />
+                    <KPICard title="LHC Advance" value={`${periodFilteredKPIMetrics.lhcAdvance.toFixed(1)}%`} target="80%" delta={((periodFilteredKPIMetrics.lhcAdvance - 80) / 80) * 100} icon="💳" status={getRAGStatus(periodFilteredKPIMetrics.lhcAdvance, 80)} />
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

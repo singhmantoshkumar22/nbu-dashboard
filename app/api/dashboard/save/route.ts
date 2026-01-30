@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await request.json()
-    const { fileName, metrics, kpiData, otdData, ifdData, concerns, weeklyOTD, weeklyIFD, latestWeek } = data
+    const { fileName, metrics, kpiData, otdData, ifdData, concerns, weeklyOTD, weeklyIFD, weeklyKPI, latestWeek } = data
 
     // Save dashboard record
     const { data: dashboard, error: dashboardError } = await supabase
@@ -168,6 +168,30 @@ export async function POST(request: NextRequest) {
 
         if (weeklyIFDError) {
           console.error('Weekly IFD save error:', weeklyIFDError)
+        }
+      }
+    }
+
+    // Save weekly KPI data (Freight, GM2%, PBT%, LHC)
+    if (weeklyKPI && weeklyKPI.length > 0) {
+      const batchSize = 500
+      for (let i = 0; i < weeklyKPI.length; i += batchSize) {
+        const batch = weeklyKPI.slice(i, i + batchSize).map((w: any) => ({
+          dashboard_id: dashboardId,
+          region: w.region,
+          area: w.area,
+          kpi: w.kpi,
+          week_number: w.weekNumber,
+          planned: w.planned,
+          actual: w.actual,
+        }))
+
+        const { error: weeklyKPIError } = await supabase
+          .from('kpi_weekly')
+          .insert(batch)
+
+        if (weeklyKPIError) {
+          console.error('Weekly KPI save error:', weeklyKPIError)
         }
       }
     }
