@@ -561,9 +561,25 @@ export default function Dashboard() {
 
               {/* Regions Multi-Select */}
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center gap-2">
-                  🌐 REGIONS
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium text-gray-300 flex items-center gap-2">
+                    🌐 REGIONS ({selectedRegions.length === 0 ? 'All' : selectedRegions.length}/{regions.length})
+                  </label>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setSelectedRegions([...regions])}
+                      className="px-2 py-0.5 text-xs bg-orange-600 text-white rounded hover:bg-orange-500"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      onClick={() => { setSelectedRegions([]); setSelectedAreas([]) }}
+                      className="px-2 py-0.5 text-xs bg-slate-600 text-white rounded hover:bg-slate-500"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
                 <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-2 bg-slate-900/50 rounded-lg">
                   {regions.map(region => (
                     <button
@@ -586,11 +602,27 @@ export default function Dashboard() {
 
               {/* Areas Multi-Select */}
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center gap-2">
-                  📍 AREAS
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium text-gray-300 flex items-center gap-2">
+                    📍 AREAS ({selectedAreas.length === 0 ? 'All' : selectedAreas.length}/{areas.length})
+                  </label>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setSelectedAreas([...areas])}
+                      className="px-2 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-500"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      onClick={() => setSelectedAreas([])}
+                      className="px-2 py-0.5 text-xs bg-slate-600 text-white rounded hover:bg-slate-500"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
                 <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-2 bg-slate-900/50 rounded-lg">
-                  {areas.slice(0, 30).map(area => (
+                  {areas.map(area => (
                     <button
                       key={area}
                       onClick={() => toggleArea(area)}
