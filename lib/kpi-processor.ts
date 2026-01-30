@@ -491,12 +491,20 @@ export function calculateFilteredMetrics(
   filteredOTD: WeeklyDeliveryData[],
   filteredIFD: WeeklyDeliveryData[],
   selectedRegions: string[],
-  selectedAreas: string[]
+  selectedAreas: string[],
+  allRegions?: string[],
+  allAreas?: string[]
 ): { otdPercent: number; ifdPercent: number } {
+  // Check if all regions/areas are selected (treat same as none selected)
+  const allRegionsSelected = allRegions && selectedRegions.length === allRegions.length
+  const allAreasSelected = allAreas && selectedAreas.length === allAreas.length
+
   // Apply region/area filters
   const filterBySelection = (d: WeeklyDeliveryData) => {
-    if (selectedRegions.length > 0 && !selectedRegions.includes(d.region)) return false
-    if (selectedAreas.length > 0 && !selectedAreas.includes(d.area)) return false
+    // Skip region filter if none selected OR all selected
+    if (selectedRegions.length > 0 && !allRegionsSelected && !selectedRegions.includes(d.region)) return false
+    // Skip area filter if none selected OR all selected
+    if (selectedAreas.length > 0 && !allAreasSelected && !selectedAreas.includes(d.area)) return false
     return true
   }
 
@@ -543,7 +551,9 @@ export function calculateFilteredKPIMetrics(
   latestWeek: number,
   period: 'week' | 'month' | 'quarter' | 'ytd',
   selectedRegions: string[],
-  selectedAreas: string[]
+  selectedAreas: string[],
+  allRegions?: string[],
+  allAreas?: string[]
 ): { freightBooking: number; gm2Percent: number; pbtPercent: number; lhcAdvance: number } {
   if (weeklyKPI.length === 0 || latestWeek === 0) {
     return { freightBooking: 0, gm2Percent: 0, pbtPercent: 0, lhcAdvance: 0 }
@@ -552,11 +562,17 @@ export function calculateFilteredKPIMetrics(
   // Use FY-based week ranges
   const range = getWeekRangeForPeriod(latestWeek, period)
 
+  // Check if all regions/areas are selected (treat same as none selected)
+  const allRegionsSelected = allRegions && selectedRegions.length === allRegions.length
+  const allAreasSelected = allAreas && selectedAreas.length === allAreas.length
+
   // Filter by period and selection
   const filtered = weeklyKPI.filter(d => {
     if (d.weekNumber < range.startWeek || d.weekNumber > range.endWeek) return false
-    if (selectedRegions.length > 0 && !selectedRegions.includes(d.region)) return false
-    if (selectedAreas.length > 0 && !selectedAreas.includes(d.area)) return false
+    // Skip region filter if none selected OR all selected
+    if (selectedRegions.length > 0 && !allRegionsSelected && !selectedRegions.includes(d.region)) return false
+    // Skip area filter if none selected OR all selected
+    if (selectedAreas.length > 0 && !allAreasSelected && !selectedAreas.includes(d.area)) return false
     return true
   })
 

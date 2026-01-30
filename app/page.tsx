@@ -140,7 +140,7 @@ export default function Dashboard() {
     const filteredIFD = ifdLatest > 0 ? filterByPeriod(weeklyIFD, ifdLatest, selectedPeriod) : []
 
     // Calculate aggregated metrics for the filtered period
-    const result = calculateFilteredMetrics(filteredOTD, filteredIFD, selectedRegions, selectedAreas)
+    const result = calculateFilteredMetrics(filteredOTD, filteredIFD, selectedRegions, selectedAreas, regions, areas)
 
     // If no IFD data for selected period, use overall IFD
     if (result.ifdPercent === 0 && metrics?.ifdPercent && metrics.ifdPercent > 0) {
@@ -162,8 +162,8 @@ export default function Dashboard() {
       }
     }
 
-    return calculateFilteredKPIMetrics(weeklyKPI, latestWeekKPI, selectedPeriod, selectedRegions, selectedAreas)
-  }, [weeklyKPI, latestWeekKPI, selectedPeriod, selectedRegions, selectedAreas, metrics])
+    return calculateFilteredKPIMetrics(weeklyKPI, latestWeekKPI, selectedPeriod, selectedRegions, selectedAreas, regions, areas)
+  }, [weeklyKPI, latestWeekKPI, selectedPeriod, selectedRegions, selectedAreas, metrics, regions, areas])
 
   // Get period-specific data for charts
   const periodFilteredOTDData = useMemo(() => {
